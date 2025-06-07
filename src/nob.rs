@@ -62,6 +62,10 @@ pub unsafe fn da_append_many<T: Clone + Copy>(xs: *mut Array<T>, items: *const [
     }
 }
 
+pub unsafe fn da_clear<T>(xs: *mut Array<T>) {
+    (*xs).count = 0;
+}
+
 #[macro_export]
 macro_rules! shift {
     ($ptr:ident, $len:ident) => {{

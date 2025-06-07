@@ -12,6 +12,7 @@ RSS=\
 	$(SRC)/nob.rs \
 	$(SRC)/codegen/fasm_x86_64.rs \
 	$(SRC)/codegen/gas_aarch64_linux.rs \
+	$(SRC)/codegen/gas_arm_m3_none.rs \
 	$(SRC)/codegen/uxn.rs \
 	$(SRC)/codegen/ir.rs \
 	$(SRC)/codegen/mod.rs

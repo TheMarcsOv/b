@@ -2,6 +2,7 @@ use core::ffi::*;
 use crate::strcmp;
 
 pub mod gas_aarch64_linux;
+pub mod gas_arm_m3_none;
 pub mod fasm_x86_64;
 pub mod ir;
 pub mod uxn;
@@ -13,6 +14,7 @@ pub enum Target {
     Fasm_x86_64_Windows,
     Fasm_x86_64_Linux,
     Gas_AArch64_Linux,
+    Gas_Arm_M3_None,
     Uxn,
     IR,
 }
@@ -33,6 +35,7 @@ pub const TARGET_NAMES: *const [Target_Name] = &[
     Target_Name { name: c!("fasm-x86_64-windows"), target: Target::Fasm_x86_64_Windows },
     Target_Name { name: c!("fasm-x86_64-linux"),   target: Target::Fasm_x86_64_Linux   },
     Target_Name { name: c!("gas-aarch64-linux"),   target: Target::Gas_AArch64_Linux   },
+    Target_Name { name: c!("gas-arm-m3-none"),     target: Target::Gas_Arm_M3_None     },
     Target_Name { name: c!("uxn"),                 target: Target::Uxn                 },
     Target_Name { name: c!("ir"),                  target: Target::IR                  },
 ];
@@ -60,6 +63,7 @@ pub unsafe fn target_word_size(target: Target) -> u64 {
         Target::Fasm_x86_64_Windows => 8,
         Target::Fasm_x86_64_Linux   => 8,
         Target::Gas_AArch64_Linux   => 8,
+        Target::Gas_Arm_M3_None     => 4,
         Target::Uxn                 => 2,
         Target::IR                  => 1,
     }

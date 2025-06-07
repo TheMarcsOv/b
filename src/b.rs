@@ -1301,6 +1301,32 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
                 if !cmd_run_sync_and_reset(&mut cmd) { return None; }
             }
         }
+        Target::Gas_Arm_M3_None => {
+            codegen::gas_arm_m3_none::generate_program(&mut output, &c);
+
+            let effective_output_path;
+            let input_path = *input_paths.items;
+            let base_path = temp_strip_suffix(input_path, c!(".b")).unwrap_or(input_path);
+            if (*output_path).is_null() {
+                effective_output_path = temp_sprintf(c!("%s.s"), base_path);
+            } else {
+                effective_output_path = *output_path;
+            }
+
+            if !write_entire_file(effective_output_path, output.items as *const c_void, output.count) { return None; }
+            printf(c!("Generated %s\n"), effective_output_path);
+
+            da_clear(&mut output);
+            codegen::ir::generate_program(&mut output, &c);
+            let effective_ir_path = temp_sprintf(c!("%s.ir"), base_path);
+
+            if !write_entire_file(effective_ir_path, output.items as *const c_void, output.count) { return None; }
+            printf(c!("Generated %s\n"), effective_ir_path);
+
+            if *run {
+                todo!("Running not supported for this target");
+            }
+        }
         Target::Fasm_x86_64_Windows => {
             codegen::fasm_x86_64::generate_program(&mut output, &c, codegen::Os::Windows);
 
