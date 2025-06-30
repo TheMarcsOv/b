@@ -1,6 +1,6 @@
 use core::ffi::*;
 use crate::nob::*;
-use crate::{Op, Binop, OpWithLocation, Arg, Func, Global, ImmediateValue, Compiler};
+use crate::{Op, Binop, OpWithLocation, Arg, Func, Global, ImmediateValue, Compiler, AsmFunc};
 
 pub unsafe fn dump_arg_call(arg: Arg, output: *mut String_Builder) {
     match arg {
@@ -24,15 +24,16 @@ pub unsafe fn dump_arg(output: *mut String_Builder, arg: Arg) {
         Arg::Literal(value)     => sb_appendf(output, c!("%ld"), value),
         Arg::AutoVar(index)     => sb_appendf(output, c!("auto[%zu]"), index),
         Arg::DataOffset(offset) => sb_appendf(output, c!("data[%zu]"), offset),
+        Arg::Bogus              => unreachable!("bogus-amogus")
     };
 }
 
 pub unsafe fn generate_function(name: *const c_char, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
     sb_appendf(output, c!("%s(%zu, %zu):\n"), name, params_count, auto_vars_count);
     for i in 0..body.len() {
-        sb_appendf(output, c!("%8zu:"), i);
         let op = (*body)[i];
         match op.opcode {
+            Op::Bogus => unreachable!("bogus-amogus"),
             Op::Return {arg} => {
                 sb_appendf(output, c!("    return "));
                 if let Some(arg) = arg {
@@ -97,22 +98,25 @@ pub unsafe fn generate_function(name: *const c_char, params_count: usize, auto_v
                 }
                 sb_appendf(output, c!(")\n"));
             }
-            Op::Asm {args} => {
+            Op::Asm {stmts} => {
                 sb_appendf(output, c!("   __asm__(\n"));
-                for i in 0..args.count {
-                    let arg = *args.items.add(i);
-                    sb_appendf(output, c!("    %s\n"), arg);
+                for i in 0..stmts.count {
+                    let stmt = *stmts.items.add(i);
+                    sb_appendf(output, c!("    %s\n"), stmt.line);
                 }
                 sb_appendf(output, c!(")\n"));
             }
 
-            Op::JmpIfNot{addr, arg} => {
-                sb_appendf(output, c!("    jmp_if_not %zu:, "), addr);
+            Op::Label {label} => {
+                sb_appendf(output, c!("  label[%zu]\n"), label);
+            }
+            Op::JmpLabel {label} => {
+                sb_appendf(output, c!("    jmp label[%zu]\n"), label);
+            }
+            Op::JmpIfNotLabel {label, arg} => {
+                sb_appendf(output, c!("    jmp_if_not label[%zu], "), label);
                 dump_arg(output, arg);
                 sb_appendf(output, c!("\n"));
-            }
-            Op::Jmp{addr} => {
-                sb_appendf(output, c!("    jmp %zu:\n"), addr);
             }
         }
     }
@@ -197,8 +201,20 @@ pub unsafe fn generate_data_section(output: *mut String_Builder, data: *const [u
     }
 }
 
+pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const [AsmFunc]) {
+    for i in 0..asm_funcs.len() {
+        let asm_func = (*asm_funcs)[i];
+        sb_appendf(output, c!("%s(asm):\n"), asm_func.name);
+        for j in 0..asm_func.body.count {
+            let stmt = *asm_func.body.items.add(j);
+            sb_appendf(output, c!("    %s\n"), stmt.line);
+        }
+    }
+}
+
 pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) {
     generate_funcs(output, da_slice((*c).funcs));
+    generate_asm_funcs(output, da_slice((*c).asm_funcs));
     generate_extrns(output, da_slice((*c).extrns));
     generate_globals(output, da_slice((*c).globals));
     generate_data_section(output, da_slice((*c).data));

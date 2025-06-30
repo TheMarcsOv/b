@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# TODO: add jobs that test on different host platforms (windows, aarch64, etc)
+
+jobs:
+  btest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --no-self-update --profile minimal
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -qq -y clang make fasm mingw-w64 wine64 gcc-aarch64-linux-gnu qemu-user
+          git clone https://git.sr.ht/~rabbits/uxn11
+          cd uxn11
+          make cli
+      - name: Build Toolchain
+        run: |
+          make -B
+      - name: Run Tests
+        run: |
+          PATH=$(realpath uxn11/bin):$PATH ./build/btest
+      - name: Build Examples
+        run: |
+          PATH=$(realpath uxn11/bin):$PATH ./build/btest -dir ./examples/ -build-only

@@ -2,7 +2,7 @@ use core::ffi::*;
 use core::mem::zeroed;
 use crate::nob::*;
 use crate::crust::libc::*;
-use crate::{Compiler, Binop, Op, OpWithLocation, Arg, Func, Global, ImmediateValue, align_bytes};
+use crate::{Compiler, Binop, Op, OpWithLocation, Arg, Func, Global, ImmediateValue, align_bytes, AsmFunc};
 use crate::{missingf, Loc};
 
 pub unsafe fn call_arg(arg: Arg, loc: Loc, output: *mut String_Builder) {
@@ -78,10 +78,11 @@ pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_
                 sb_appendf(output, c!("    add %s, %s, %zu\n"), reg, reg, offset);
             }
         }
+        Arg::Bogus => unreachable!("bogus-amogus")
     };
 }
 
-pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
+pub unsafe fn generate_function(name: *const c_char, _name_loc: Loc, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
     let stack_size = align_bytes(auto_vars_count*8, 16);
     sb_appendf(output, c!(".global %s\n"), name);
     sb_appendf(output, c!("%s:\n"), name);
@@ -90,20 +91,24 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
     sb_appendf(output, c!("    mov x29, sp\n"), name);
     sb_appendf(output, c!("    sub sp, sp, %zu\n"), stack_size);
     assert!(auto_vars_count >= params_count);
-    // TODO: add support for the rest of the parameters.
+
     const REGISTERS: *const[*const c_char] = &[c!("x0"), c!("x1"), c!("x2"), c!("x3"), c!("x4"), c!("x5"), c!("x6"), c!("x7")];
-    if params_count > REGISTERS.len() {
-        missingf!(name_loc, c!("Too many parameters in function definition. We support only %zu but %zu were provided\n"), REGISTERS.len(), params_count);
-    }
     for i in 0..params_count {
-        let reg = (*REGISTERS)[i];
-        let index = i + 1;
-        sb_appendf(output, c!("    str %s, [x29, -%zu]\n"), reg, index*8);
+        let below_index = i + 1;
+        let reg = if i < REGISTERS.len() { (*REGISTERS)[i] } else { c!("x8") };
+
+        if i >= REGISTERS.len() {
+            let above_index = i - REGISTERS.len();
+            sb_appendf(output, c!("    ldr x8, [x29, 2*8 + %zu]\n"), above_index*8);
+        }
+
+        sb_appendf(output, c!("    str %s, [x29, -%zu]\n"), reg, below_index*8);
     }
+
     for i in 0..body.len() {
-        sb_appendf(output, c!("%s.op_%zu:\n"), name, i);
         let op = (*body)[i];
         match op.opcode {
+            Op::Bogus => unreachable!("bogus-amogus"),
             Op::Return {arg} => {
                 if let Some(arg) = arg {
                     load_arg_to_reg(arg, c!("x0"), output, op.loc);
@@ -114,12 +119,8 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
             }
             Op::Negate {result, arg} => {
                 load_arg_to_reg(arg, c!("x0"), output, op.loc);
-                sb_appendf(output, c!("    mov x1, 1\n")); // TODO: is it possible to somehow
-                                                           // supply 1 to the 3rd argument of mneg
-                                                           // as an immediate value without moving
-                                                           // it to a separate register?
-                sb_appendf(output, c!("    mneg x2, x0, x1\n"));
-                sb_appendf(output, c!("    str x2, [x29, -%zu]\n"), result*8);
+                sb_appendf(output, c!("    neg x0, x0\n"));
+                sb_appendf(output, c!("    str x0, [x29, -%zu]\n"), result*8);
             }
             Op::UnaryNot {result, arg} => {
                 load_arg_to_reg(arg, c!("x0"), output, op.loc);
@@ -245,35 +246,45 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 sb_appendf(output, c!("    str x1, [x0]\n"));
             },
             Op::Funcall {result, fun, args} => {
-                if args.count > REGISTERS.len() {
-                    missingf!(op.loc, c!("Too many function call arguments. We support only %zu but %zu were provided\n"), REGISTERS.len(), args.count);
-                }
-                for i in 0..args.count {
+                let reg_args_count = if args.count <= REGISTERS.len() { args.count } else { REGISTERS.len() };
+                for i in 0..reg_args_count {
                     let reg = (*REGISTERS)[i];
                     load_arg_to_reg(*args.items.add(i), reg, output, op.loc);
                 }
+
+                let stack_args_count = args.count - reg_args_count;
+                let stack_args_size = align_bytes(stack_args_count*8, 16);
+                sb_appendf(output, c!("    sub sp, sp, %zu\n"), stack_args_size);
+                for i in reg_args_count..args.count {
+                    let above_index = i - reg_args_count;
+                    load_arg_to_reg(*args.items.add(i), c!("x8"), output, op.loc);
+                    sb_appendf(output, c!("    str x8, [sp, %zu]\n"), above_index*8);
+                }
+
                 call_arg(fun, op.loc, output);
 
                 sb_appendf(output, c!("    str x0, [x29, -%zu]\n"), result*8);
+                sb_appendf(output, c!("    add sp, sp, %zu\n"), stack_args_size);
             },
-            Op::Asm {args} => {
-                for i in 0..args.count {
-                    let arg = *args.items.add(i);
-                    sb_appendf(output, c!("    %s\n"), arg);
+            Op::Asm {stmts} => {
+                for i in 0..stmts.count {
+                    let stmt = *stmts.items.add(i);
+                    sb_appendf(output, c!("    %s\n"), stmt.line);
                 }
             }
-
-            Op::Jmp {addr} => {
-                sb_appendf(output, c!("    b %s.op_%zu\n"), name, addr);
-            },
-            Op::JmpIfNot {addr, arg} => {
+            Op::Label {label} => {
+                sb_appendf(output, c!("%s.label_%zu:\n"), name, label);
+            }
+            Op::JmpLabel {label} => {
+                sb_appendf(output, c!("    b %s.label_%zu\n"), name, label);
+            }
+            Op::JmpIfNotLabel {label, arg} => {
                 load_arg_to_reg(arg, c!("x0"), output, op.loc);
                 sb_appendf(output, c!("    cmp x0, 0\n"));
-                sb_appendf(output, c!("    beq %s.op_%zu\n"), name, addr);
-            },
+                sb_appendf(output, c!("    beq %s.label_%zu\n"), name, label);
+            }
         }
     }
-    sb_appendf(output, c!("%s.op_%zu:\n"), name, body.len());
     sb_appendf(output, c!("    mov x0, 0\n"));
     sb_appendf(output, c!("    add sp, sp, %zu\n"), stack_size);
     sb_appendf(output, c!("    ldp x29, x30, [sp], 2*8\n"));
@@ -333,8 +344,21 @@ pub unsafe fn generate_globals(output: *mut String_Builder, globals: *const [Glo
     }
 }
 
+pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const [AsmFunc]) {
+    for i in 0..asm_funcs.len() {
+        let asm_func = (*asm_funcs)[i];
+        sb_appendf(output, c!(".global %s\n"), asm_func.name);
+        sb_appendf(output, c!("%s:\n"), asm_func.name);
+        for j in 0..asm_func.body.count {
+            let stmt = *asm_func.body.items.add(j);
+            sb_appendf(output, c!("    %s\n"), stmt.line);
+        }
+    }
+}
+
 pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) {
     generate_funcs(output, da_slice((*c).funcs));
+    generate_asm_funcs(output, da_slice((*c).asm_funcs));
     generate_globals(output, da_slice((*c). globals));
     generate_data_section(output, da_slice((*c).data));
 }

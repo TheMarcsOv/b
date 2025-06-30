@@ -1,6 +1,6 @@
 use core::ffi::*;
 use core::mem::zeroed;
-use crate::{Op, Binop, OpWithLocation, Arg, Func, Global, ImmediateValue, Compiler};
+use crate::{Op, Binop, OpWithLocation, Arg, Func, Global, ImmediateValue, Compiler, AsmFunc};
 use crate::nob::*;
 use crate::crust::libc::*;
 use crate::{missingf, Loc};
@@ -101,6 +101,13 @@ const SP: u8 = 0;
 const BP: u8 = 2;
 const FIRST_ARG: u8 = 4;
 
+pub unsafe fn generate_asm_funcs(_output: *mut String_Builder, asm_funcs: *const [AsmFunc]) {
+    for i in 0..asm_funcs.len() {
+        let asm_func = (*asm_funcs)[i];
+        missingf!(asm_func.name_loc, c!("__asm__ functions for uxn"));
+    }
+}
+
 pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) {
     let mut assembler: Assembler = zeroed();
     assembler.data_section_label = create_label(&mut assembler);
@@ -127,6 +134,7 @@ pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) 
     write_op(output, UxnOp::BRK);
 
     generate_funcs(output, da_slice((*c).funcs), &mut assembler);
+    generate_asm_funcs(output, da_slice((*c).asm_funcs));
     generate_extrns(output, da_slice((*c).extrns), da_slice((*c).funcs), da_slice((*c).globals), &mut assembler);
     generate_data_section(output, da_slice((*c).data), &mut assembler);
     generate_globals(output, da_slice((*c).globals), &mut assembler);
@@ -174,18 +182,23 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
         store_auto(output, i + 1);
     }
 
-    // prepare labels for each op and the end of the function
-    let mut op_labels: Array<usize> = zeroed();
-    for _ in 0..body.len() {
-        da_append(&mut op_labels, create_label(assembler));
+    // prepare our labels for each IR label
+    let mut labels: Array<usize> = zeroed();
+    for i in 0..body.len() {
+        let op = (*body)[i];
+        match op.opcode {
+            Op::Label {..} => {
+                da_append(&mut labels, create_label(assembler));
+            }
+            _ => {}
+        }
     }
-    da_append(&mut op_labels, create_label(assembler));
 
     // emit code
     for i in 0..body.len() {
-        link_label(assembler, *op_labels.items.add(i), (*output).count);
         let op = (*body)[i];
         match op.opcode {
+            Op::Bogus => unreachable!("bogus-amogus"),
             Op::UnaryNot {result, arg} => {
                 load_arg(arg, output, assembler);
                 // if arg == 0 then 1 else 0
@@ -454,16 +467,19 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 store_auto(output, result);
             }
             Op::Asm {..} => missingf!(op.loc, c!("Inline assembly\n")),
-            Op::Jmp {addr} => {
-                write_op(output, UxnOp::JMI);
-                write_label_rel(output, *op_labels.items.add(addr), assembler, 0);
+            Op::Label {label} => {
+                link_label(assembler, *labels.items.add(label), (*output).count);
             }
-            Op::JmpIfNot {addr, arg} => {
+            Op::JmpLabel {label} => {
+                write_op(output, UxnOp::JMI);
+                write_label_rel(output, *labels.items.add(label), assembler, 0);
+            }
+            Op::JmpIfNotLabel {label, arg} => {
                 load_arg(arg, output, assembler);
                 write_lit2(output, 0);
                 write_op(output, UxnOp::EQU2);
                 write_op(output, UxnOp::JCI);
-                write_label_rel(output, *op_labels.items.add(addr), assembler, 0);
+                write_label_rel(output, *labels.items.add(label), assembler, 0);
             }
             Op::Return {arg} => {
                 // Put return value in the FIRST_ARG
@@ -492,9 +508,8 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
             }
         }
     }
-    link_label(assembler, *op_labels.items.add(body.len()), (*output).count);
 
-    free(op_labels.items);
+    free(labels.items);
 
     // return value is 0
     write_lit2(output, 0);
@@ -642,6 +657,7 @@ pub unsafe fn load_arg(arg: Arg, output: *mut String_Builder, assembler: *mut As
             write_op(output, UxnOp::LIT2);
             write_label_abs(output, label, assembler, 0);
         }
+        Arg::Bogus => unreachable!("bogus-amogus"),
     }
 }
 

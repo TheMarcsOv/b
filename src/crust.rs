@@ -26,8 +26,11 @@ pub mod libc {
         pub fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
         pub fn strchr(s: *const c_char, c: c_int) -> *const c_char;
         pub fn strlen(s: *const c_char) -> usize;
+        pub fn strtoull(nptr: *const c_char, endptr: *mut*mut c_char, base: c_int) -> c_ulonglong;
+
         pub fn abort() -> !;
         pub fn strdup(s: *const c_char) -> *mut c_char;
+        pub fn strncpy(dst: *mut c_char, src: *const c_char, dsize: usize) -> *mut c_char;
         pub fn printf(fmt: *const c_char, ...) -> c_int;
         pub fn fprintf(stream: *mut FILE, fmt: *const c_char, ...) -> c_int;
         pub fn memset(dest: *mut c_void, byte: c_int, size: usize) -> c_int;
@@ -35,6 +38,8 @@ pub mod libc {
         pub fn isalpha(c: c_int) -> c_int;
         pub fn isalnum(c: c_int) -> c_int;
         pub fn isdigit(c: c_int) -> c_int;
+        pub fn toupper(c: c_int) -> c_int;
+        pub fn qsort(base: *mut c_void, nmemb: usize, size: usize, compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int);
     }
 
     // count is the amount of items, not bytes
