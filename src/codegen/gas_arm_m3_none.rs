@@ -64,16 +64,18 @@ pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_
 }
 
 pub unsafe fn stk_off(stack_size: usize, idx: usize) -> usize {
-    if idx * 4 >= stack_size {
+    //NOTE: idx is one based
+    assert!(idx > 0);
+    if (idx - 1) * 4 >= stack_size {
         printf(c!("Stack overflow, index %zu vs stack %zu\n"), idx, stack_size);
         panic!();
     }
-    stack_size - (idx + 1) * 4
+    stack_size - idx * 4
 }
 
 pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
     
-    let stack_size = align_bytes(auto_vars_count * 4, 8) + 8; //TODO: remove +8
+    let stack_size = align_bytes(auto_vars_count * 4, 8);
     sb_appendf(output, c!(".global %s\n"), name);
     sb_appendf(output, c!(".type %s, %%function\n"), name);
     sb_appendf(output, c!(".thumb_func\n"));
@@ -93,7 +95,7 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
         let reg = (*REGISTERS)[i];
         // In Thumb, compilers seem to use positive offsets in order to use the more compact
         // 16-bit encoding. If you use a negative value, it uses the 32-bit encoding.
-        let stack_offset = stk_off(stack_size, i);
+        let stack_offset = stk_off(stack_size, i+1);
         sb_appendf(output, c!("    str %s, [r7, #%zu]\n"), reg, stack_offset);
     }
 
