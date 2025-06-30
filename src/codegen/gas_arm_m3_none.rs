@@ -1,6 +1,6 @@
 use crate::crust::libc::*;
 use crate::nob::*;
-use crate::{align_bytes, missingf, Arg, Binop, Compiler, Func, Loc, Op, OpWithLocation};
+use crate::{align_bytes, missingf, Arg, Binop, Compiler, Func, Loc, Op, OpWithLocation, AsmFunc};
 use core::ffi::*;
 
 pub unsafe fn call_arg(arg: Arg, loc: Loc, stack_size: usize, output: *mut String_Builder) {
@@ -285,6 +285,19 @@ pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func]) 
     }
 }
 
+pub unsafe fn generate_asm_funcs(output: *mut String_Builder, asm_funcs: *const [AsmFunc]) {
+    for i in 0..asm_funcs.len() {
+        let asm_func = (*asm_funcs)[i];
+        sb_appendf(output, c!(".global %s\n"), asm_func.name);
+        sb_appendf(output, c!(".type %s, %%function\n"), asm_func.name);
+        sb_appendf(output, c!("%s:\n"), asm_func.name);
+        for j in 0..asm_func.body.count {
+            let stmt = *asm_func.body.items.add(j);
+            sb_appendf(output, c!("    %s\n"), stmt.line);
+        }
+    }
+}
+
 pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) {
     // File ASM preamble
     sb_appendf(output, c!(".syntax unified\n"));
@@ -294,7 +307,7 @@ pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) 
 
     // Rest of the translation unit
     generate_funcs(output, da_slice((*c).funcs));
-    // TODO: asm functions
+    generate_asm_funcs(output, da_slice((*c).asm_funcs));
     // TODO: globals
     // TODO: data section
 }
