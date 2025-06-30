@@ -1528,13 +1528,6 @@ pub unsafe fn main(mut argc: i32, mut argv: *mut*mut c_char) -> Option<()> {
             if !write_entire_file(effective_output_path, output.items as *const c_void, output.count) { return None; }
             printf(c!("Generated %s\n"), effective_output_path);
 
-            da_clear(&mut output);
-            codegen::ir::generate_program(&mut output, &c);
-            let effective_ir_path = temp_sprintf(c!("%s.ir"), base_path);
-
-            if !write_entire_file(effective_ir_path, output.items as *const c_void, output.count) { return None; }
-            printf(c!("Generated %s\n"), effective_ir_path);
-
             if *run {
                 todo!("Running not supported for this target");
             }
