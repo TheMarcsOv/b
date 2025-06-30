@@ -3,14 +3,10 @@ use crate::nob::*;
 use crate::{align_bytes, missingf, Arg, Binop, Compiler, Func, Loc, Op, OpWithLocation};
 use core::ffi::*;
 
-pub unsafe fn load_arg_to_reg(
-    arg: Arg,
-    reg: *const c_char,
-    output: *mut String_Builder,
-    loc: Loc,
-    stack_size: usize,
+pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_Builder, loc: Loc, stack_size: usize,
 ) {
     match arg {
+        Arg::Bogus => unreachable!("argbogus"),
         Arg::External(name) => {
             todo!();
             // sb_appendf(output, c!("    adrp %s, %s\n"), reg, name);
@@ -75,14 +71,8 @@ pub unsafe fn stk_off(stack_size: usize, idx: usize) -> usize {
     stack_size - (idx + 1) * 4
 }
 
-pub unsafe fn generate_function(
-    name: *const c_char,
-    name_loc: Loc,
-    params_count: usize,
-    auto_vars_count: usize,
-    body: *const [OpWithLocation],
-    output: *mut String_Builder,
-) {
+pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count: usize, auto_vars_count: usize, body: *const [OpWithLocation], output: *mut String_Builder) {
+    
     let stack_size = align_bytes(auto_vars_count * 4, 8) + 8; //TODO: remove +8
     sb_appendf(output, c!(".global %s\n"), name);
     sb_appendf(output, c!(".type %s, %%function\n"), name);
@@ -218,21 +208,24 @@ pub unsafe fn generate_function(
 
                 // sb_appendf(output, c!("    str x0, [x29, -%zu]\n"), result*8);
             }
-            Op::Asm { args } => {
-                for i in 0..args.count {
-                    let arg = *args.items.add(i);
-                    sb_appendf(output, c!("    %s\n"), arg);
+            Op::Asm { stmts } => {
+                for i in 0..stmts.count {
+                    let stmt = *stmts.items.add(i);
+                    sb_appendf(output, c!("    %s\n"), stmt.line);
                 }
             }
-
-            Op::Jmp { addr } => {
-                sb_appendf(output, c!("    b %s.op_%zu\n"), name, addr);
+            Op::Label {label} => {
+                sb_appendf(output, c!("%s.label_%zu:\n"), name, label);
             }
-            Op::JmpIfNot { addr, arg } => {
+            Op::JmpLabel { label } => {
+                sb_appendf(output, c!("    b %s.label_%zu\n"), name, label);
+            }
+            Op::JmpIfNotLabel { label, arg } => {
                 load_arg_to_reg(arg, c!("r0"), output, op.loc, stack_size);
                 sb_appendf(output, c!("    cmp r0, 0\n"));
-                sb_appendf(output, c!("    beq %s.op_%zu\n"), name, addr);
+                sb_appendf(output, c!("    beq %s.label_%zu\n"), name, label);
             }
+            Op::Bogus => unreachable!("amogus"),
         }
     }
     sb_appendf(output, c!("%s.op_%zu:\n"), name, body.len());
@@ -264,6 +257,7 @@ pub unsafe fn generate_program(output: *mut String_Builder, c: *const Compiler) 
 
     // Rest of the translation unit
     generate_funcs(output, da_slice((*c).funcs));
+    // TODO: asm functions
     // TODO: globals
     // TODO: data section
 }
