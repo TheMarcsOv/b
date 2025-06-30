@@ -3,41 +3,41 @@ use crate::nob::*;
 use crate::{align_bytes, missingf, Arg, Binop, Compiler, Func, Loc, Op, OpWithLocation};
 use core::ffi::*;
 
-pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_Builder, loc: Loc, stack_size: usize,
-) {
+pub unsafe fn call_arg(arg: Arg, loc: Loc, stack_size: usize, output: *mut String_Builder) {
     match arg {
-        Arg::Bogus => unreachable!("argbogus"),
+        Arg::RefExternal(name) | Arg::External(name) => sb_appendf(output, c!("    bl %s\n"), name),
+        arg => {
+            load_arg_to_reg(arg, c!("r4"), output, loc, stack_size);
+            sb_appendf(output, c!("    blx r4\n"))
+        },
+    };
+}
+
+pub unsafe fn return_func(stack_size: usize, output: *mut String_Builder) {
+    sb_appendf(output, c!("    add r7, r7, #%zu\n"), stack_size); //Free stack
+    sb_appendf(output, c!("    mov sp, r7\n"));
+    sb_appendf(output, c!("    pop {r7, pc}\n")); // pop frame pointer and return
+}
+
+pub unsafe fn load_arg_to_reg(arg: Arg, reg: *const c_char, output: *mut String_Builder, loc: Loc, stack_size: usize) {
+    match arg {
+        Arg::Bogus => unreachable!("bogus-amogus"),
         Arg::External(name) => {
-            todo!();
-            // sb_appendf(output, c!("    adrp %s, %s\n"), reg, name);
-            // sb_appendf(output, c!("    add  %s, %s, :lo12:%s\n"), reg, reg, name);
-            // sb_appendf(output, c!("    ldr %s, [%s]\n"), reg, reg);
+            sb_appendf(output, c!("    adr %s, =%s\n"), reg, name);
+            sb_appendf(output, c!("    ldr %s, [%s]\n"), reg, reg);
         }
         Arg::Deref(index) => {
-            sb_appendf(
-                output,
-                c!("    ldr %s, [r7, #%zu]\n"),
-                reg,
-                stk_off(stack_size, index),
-            );
+            sb_appendf(output, c!("    ldr %s, [r7, #%zu]\n"), reg, stk_off(stack_size, index));
             sb_appendf(output, c!("    ldr %s, [%s]\n"), reg, reg);
         }
         Arg::RefAutoVar(index) => {
-            todo!();
-            // sb_appendf(output, c!("    sub %s, x29, %zu\n"), reg, index*8);
+            sb_appendf(output, c!("    add %s, r7, %zu\n"), reg, stk_off(stack_size, index));
         }
         Arg::RefExternal(name) => {
-            todo!();
-            // sb_appendf(output, c!("    adrp %s, %s\n"), reg, name);
-            // sb_appendf(output, c!("    add  %s, %s, :lo12:%s\n"), reg, reg, name);
+            sb_appendf(output, c!("    adr %s, =%s\n"), reg, name);
         }
         Arg::AutoVar(index) => {
-            sb_appendf(
-                output,
-                c!("    ldr %s, [r7, #%zu]\n"),
-                reg,
-                stk_off(stack_size, index),
-            );
+            sb_appendf(output, c!("    ldr %s, [r7, #%zu]\n"), reg, stk_off(stack_size, index));
         }
         Arg::Literal(value) => {
             let value = value as u32;
@@ -104,20 +104,23 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
         let op = (*body)[i];
         match op.opcode {
             Op::Return { arg } => {
-                todo!();
+                if let Some(arg) = arg {
+                    load_arg_to_reg(arg, c!("x0"), output, op.loc, stack_size);
+                }
+                return_func(stack_size, output);
             }
             Op::Negate { result, arg } => {
-                todo!();
+                load_arg_to_reg(arg, c!("r0"), output, op.loc, stack_size);
+                sb_appendf(output, c!("    neg r0, r0\n"));
+                sb_appendf(output, c!("    str r0, [r7, #%zu]\n"), stk_off(stack_size, result));
             }
             Op::UnaryNot { result, arg } => {
-                todo!();
+                load_arg_to_reg(arg, c!("r0"), output, op.loc, stack_size);
+                sb_appendf(output, c!("    clz r0, r0\n"));
+                sb_appendf(output, c!("    lsr r0, r0, #5\n")); // 1 if there are 32 zeros 0 otherwise
+                sb_appendf(output, c!("    str r0, [r7, #%zu]\n"), stk_off(stack_size, result));
             }
-            Op::Binop {
-                binop,
-                index,
-                lhs,
-                rhs,
-            } => {
+            Op::Binop { binop, index, lhs, rhs } => {
                 match binop {
                     Binop::BitOr => {
                         load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
@@ -130,13 +133,19 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                         sb_appendf(output, c!("    and r0, r0, r1\n"));
                     }
                     Binop::BitShl => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    lsl r0, r0, r1\n"));
                     }
                     Binop::BitShr => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    lsr r0, r0, r1\n"));
                     }
                     Binop::Plus => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    add r0, r0, r1\n"));
                     }
                     Binop::Minus => {
                         load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
@@ -144,71 +153,99 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                         sb_appendf(output, c!("    sub r0, r0, r1\n"));
                     }
                     Binop::Mod => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    sdiv r2, r0, r1\n"));    // a / b = d;
+                        sb_appendf(output, c!("    mls r0, r2, r1, r0\n")); // a % b = a - d * b 
                     }
                     Binop::Div => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    sdiv r2, r0, r1\n"));    // a / b = d;
                     }
                     Binop::Mult => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    mul r0, r0, r1\n"));
                     }
                     Binop::Less => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite lt\n"));
+                        sb_appendf(output, c!("    movlt r0, #1\n"));
+                        sb_appendf(output, c!("    movge r0, #0\n"));
                     }
                     Binop::Greater => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite gt\n"));
+                        sb_appendf(output, c!("    movgt r0, #1\n"));
+                        sb_appendf(output, c!("    movle r0, #0\n"));
                     }
                     Binop::Equal => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite eq\n"));
+                        sb_appendf(output, c!("    moveq r0, #1\n"));
+                        sb_appendf(output, c!("    movne r0, #0\n"));
                     }
                     Binop::NotEqual => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite ne\n"));
+                        sb_appendf(output, c!("    movne r0, #1\n"));
+                        sb_appendf(output, c!("    moveq r0, #0\n"));
                     }
                     Binop::GreaterEqual => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite ge\n"));
+                        sb_appendf(output, c!("    movge r0, #1\n"));
+                        sb_appendf(output, c!("    movlt r0, #0\n"));
                     }
                     Binop::LessEqual => {
-                        todo!();
+                        load_arg_to_reg(lhs, c!("r0"), output, op.loc, stack_size);
+                        load_arg_to_reg(rhs, c!("r1"), output, op.loc, stack_size);
+                        sb_appendf(output, c!("    cmp r0, r1\n"));
+                        sb_appendf(output, c!("    ite le\n"));
+                        sb_appendf(output, c!("    movle r0, #1\n"));
+                        sb_appendf(output, c!("    movgt r0, #0\n"));
                     }
                 }
-                sb_appendf(
-                    output,
-                    c!("    str r0, [r7, #%zu]\n"),
-                    stk_off(stack_size, index),
-                );
+                sb_appendf(output, c!("    str r0, [r7, #%zu]\n"), stk_off(stack_size, index));
             }
             Op::ExternalAssign { name, arg } => {
-                todo!();
+                load_arg_to_reg(arg, c!("r0"), output, op.loc, stack_size);
+                sb_appendf(output, c!("    str r0, [r1]\n"));
             }
             Op::AutoAssign { index, arg } => {
                 load_arg_to_reg(arg, c!("r0"), output, op.loc, stack_size);
-                sb_appendf(
-                    output,
-                    c!("    str r0, [r7, #%zu]\n"),
-                    stk_off(stack_size, index),
-                );
+                sb_appendf(output, c!("    str r0, [r7, #%zu]\n"), stk_off(stack_size, index));
             }
             Op::Store { index, arg } => {
-                sb_appendf(
-                    output,
-                    c!("    ldr r0, [r7, #%zu]\n"),
-                    stk_off(stack_size, index),
-                );
+                sb_appendf(output, c!("    ldr r0, [r7, #%zu]\n"), stk_off(stack_size, index));
                 load_arg_to_reg(arg, c!("r1"), output, op.loc, stack_size);
                 sb_appendf(output, c!("    str r1, [r0]\n"));
             }
             Op::Funcall { result, fun, args } => {
-                todo!();
-                if args.count > REGISTERS.len() {
+                let reg_args_count = args.count;
+                // TODO: allocate stack space for extra args
+                if reg_args_count > REGISTERS.len() {
                     missingf!(op.loc, c!("Too many function call arguments. We support only %zu but %zu were provided\n"), REGISTERS.len(), args.count);
                 }
-                // for i in 0..args.count {
-                //     let reg = (*REGISTERS)[i];
-                //     load_arg_to_reg(*args.items.add(i), reg, output, op.loc);
-                // }
-                // call_arg(fun, op.loc, output);
-
-                // sb_appendf(output, c!("    str x0, [x29, -%zu]\n"), result*8);
+                for i in 0..reg_args_count {
+                    let reg = (*REGISTERS)[i];
+                    load_arg_to_reg(*args.items.add(i), reg, output, op.loc, stack_size);
+                }
+                
+                call_arg(fun, op.loc, stack_size, output);
+                sb_appendf(output, c!("    str r0, [r7, #%zu]\n"), stk_off(stack_size, result));
+                // TODO: deallocate stack space
             }
             Op::Asm { stmts } => {
                 for i in 0..stmts.count {
@@ -227,13 +264,11 @@ pub unsafe fn generate_function(name: *const c_char, name_loc: Loc, params_count
                 sb_appendf(output, c!("    cmp r0, 0\n"));
                 sb_appendf(output, c!("    beq %s.label_%zu\n"), name, label);
             }
-            Op::Bogus => unreachable!("amogus"),
+            Op::Bogus => unreachable!("bogus-amogus"),
         }
     }
     sb_appendf(output, c!("%s.op_%zu:\n"), name, body.len());
-    sb_appendf(output, c!("    add r7, r7, #%zu\n"), stack_size); //Free stack
-    sb_appendf(output, c!("    mov sp, r7\n"));
-    sb_appendf(output, c!("    pop {r7, pc}\n")); // pop frame pointer and return
+    return_func(stack_size, output);
     sb_appendf(output, c!("    .size %s, .-%s\n"), name, name); //TODO: check why/if needed
 }
 pub unsafe fn generate_funcs(output: *mut String_Builder, funcs: *const [Func]) {
